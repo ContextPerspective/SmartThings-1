@@ -1,18 +1,18 @@
 /**
- *  Neo Coolcam Motion Sensor v1.0.1
- *  (Model: NAS-PD01ZU-T / NAS-PD01ZE-T)
+ *  Neo Coolcam Door Sensor v1.0.1
+ *  (Model: NAS-DS02ZU / NAS-DS02ZE)
  *
  *  Author: 
  *    Kevin LaFramboise (krlaframboise)
  *
- *  URL to documentation:  https://community.smartthings.com/t/release-neo-coolcam-motion-sensor-nas-pd01zu-t/143096?u=krlaframboise
+ *  URL to documentation: https://community.smartthings.com/t/release-neo-coolcam-door-window-sensor/145827
  *
  *  Changelog:
  *
  *    1.0.1 (03/14/2020)
  *      - Fixed bug with enum settings that was caused by a change ST made in the new mobile app.
  *
- *    1.0 (11/21/2018)
+ *    1.0 (12/10/2018)
  *      - Initial Release
  *
  *
@@ -28,15 +28,13 @@
  */
 metadata {
 	definition (
-		name: "Neo Coolcam Motion Sensor", 
+		name: "Neo Coolcam Door Sensor", 
 		namespace: "krlaframboise", 
 		author: "Kevin LaFramboise",
-		vid: "generic-motion-4"
+		vid: "generic-contact"
 	) {
 		capability "Sensor"
-		capability "Motion Sensor"
-		capability "Temperature Measurement"
-		capability "Illuminance Measurement"
+		capability "Contact Sensor"
 		capability "Battery"
 		capability "Configuration"
 		capability "Refresh"
@@ -45,33 +43,16 @@ metadata {
 		attribute "lastCheckIn", "string"
 		attribute "syncStatus", "string"
 		
-		fingerprint mfr:"0258", prod:"0003", model:"008D", deviceJoinName: "Neo Coolcam Motion Sensor" //US Version		
-		fingerprint mfr: "0258", prod: "0003", model: "108D", deviceJoinName: "NEO Coolcam Motion Sensor" //EU Version
+		fingerprint mfr: "0258", prod: "0003", model: "0082", deviceJoinName: "NEO Coolcam Door Sensor"  //US Version
+		fingerprint mfr: "0258", prod: "0003", model: "1082", deviceJoinName: "NEO Coolcam Door Sensor" //EU Version
 	}
 	
 	tiles(scale: 2) {
-		multiAttributeTile(name:"motion", type: "generic", width: 6, height: 4){
-			tileAttribute("device.motion", key: "PRIMARY_CONTROL") {
-				attributeState("active", label:'MOTION', icon:"st.motion.motion.active", backgroundColor:"#00A0DC")
-				attributeState("inactive", label:'NO MOTION', icon:"st.motion.motion.inactive", backgroundColor:"#CCCCCC")
+		multiAttributeTile(name:"contact", type: "generic", width: 6, height: 4){
+			tileAttribute ("device.contact", key: "PRIMARY_CONTROL") {
+				attributeState "closed", label:'closed', icon:"st.contact.contact.closed", backgroundColor:"#00a0dc"
+				attributeState "open", label:'open', icon:"st.contact.contact.open", backgroundColor:"#e86d13"
 			}
-		}
-		
-		valueTile("temperature", "device.temperature", inactiveLabel: false, width: 2, height: 2) {
-			state "temperature", label:'${currentValue}°',
-				backgroundColors:[
-					[value: 31, color: "#153591"],
-					[value: 44, color: "#1e9cbb"],
-					[value: 59, color: "#90d2a7"],
-					[value: 74, color: "#44b621"],
-					[value: 84, color: "#f1d801"],
-					[value: 95, color: "#d04e00"],
-					[value: 96, color: "#bc2323"]
-				]
-		}
-		
-		valueTile("illuminance", "device.illuminance", inactiveLabel: false, width: 2, height: 2) {
-			state "illuminance", label:'${currentValue} lux'
 		}
 		
 		valueTile("battery", "device.battery", inactiveLabel: false, decoration: "flat", width: 2, height: 2) {
@@ -86,27 +67,16 @@ metadata {
 			state "default", label: "Refresh", action: "refresh", icon:"st.secondary.refresh-icon"
 		}		
 		
-		main(["motion", "temperature", "illuminance"])
-		details(["motion", "temperature", "illuminance", "battery", "refresh", "syncStatus"])
+		main("contact")
+		details(["contact", "battery", "refresh", "syncStatus"])
 	}
 	
 	simulator { }
 	
 	preferences {
-		getParamInput(motionEnabledParam)
-		getParamInput(motionSensitivityParam)
-		getParamInput(motionClearIntervalParam)
-		getParamInput(motionRetriggerIntervalParam)
-		getParamInput(suppressDuplicateMotionEventsParam)
-		getParamInput(ledEnabledParam)
-		getParamInput(temperatureReportingThresholdParam)
-		getParamInput(luxReportingIntervalParam)
-		getParamInput(luxReportingThresholdParam)		
-		getParamInput(ambientLightIntensityCalibrationParam)
+		getParamInput(basicSetOffDelayParam)
 		getParamInput(basicSetLevelParam)
-		getParamInput(basicSetMotionLuxThresholdParam)
-		getParamInput(basicSetMotionLuxEnabledParam)
-				
+						
 		input "wakeUpInterval", "enum",
 			title: "Wake Up Interval:",
 			required: false,
@@ -159,9 +129,7 @@ def executeConfigure() {
 	def cmds = [
 		wakeUpIntervalGetCmd(),
 		sensorBinaryGetCmd(),
-		batteryGetCmd(),
-		sensorMultilevelGetCmd(tempSensorType),
-		sensorMultilevelGetCmd(lightSensorType)
+		batteryGetCmd()
 	]
 	
 	cmds += getConfigCmds()
@@ -241,20 +209,6 @@ def parse(String description) {
 }
 
 
-def zwaveEvent(physicalgraph.zwave.commands.securityv1.SecurityMessageEncapsulation cmd) {
-	def encapCmd = cmd.encapsulatedCommand(commandClassVersions)
-		
-	def result = []
-	if (encapCmd) {
-		result += zwaveEvent(encapCmd)
-	}
-	else {
-		log.warn "Unable to extract encapsulated cmd from $cmd"
-	}
-	return result
-}
-
-
 def zwaveEvent(physicalgraph.zwave.commands.wakeupv1.WakeUpIntervalReport cmd) {
 	state.wakeUpInterval = cmd.seconds
 
@@ -289,12 +243,7 @@ def zwaveEvent(physicalgraph.zwave.commands.wakeupv1.WakeUpNotification cmd) {
 	}
 		
 	if (state.refreshSensors) {
-		cmds += [
-			sensorBinaryGetCmd()
-			// ,
-			// sensorMultilevelGetCmd(tempSensorType),
-			// sensorMultilevelGetCmd(lightSensorType)
-		]
+		cmds << sensorBinaryGetCmd()
 		state.refreshSensors = false
 	}
 	
@@ -306,7 +255,7 @@ def zwaveEvent(physicalgraph.zwave.commands.wakeupv1.WakeUpNotification cmd) {
 		
 	if (cmds) {
 		cmds = delayBetween(cmds, 1000)
-		cmds << "delay 3000"
+		cmds << "delay 2000"
 	}
 	cmds << wakeUpNoMoreInfoCmd()	
 	return response(cmds)
@@ -325,28 +274,6 @@ def zwaveEvent(physicalgraph.zwave.commands.batteryv1.BatteryReport cmd) {
 	
 	logDebug "Battery ${val}%"
 	sendEvent(getEventMap("battery", val, null, null, "%"))
-	return []
-}
-
-
-def zwaveEvent(physicalgraph.zwave.commands.sensormultilevelv5.SensorMultilevelReport cmd) {
-	logTrace "SensorMultilevelReport: ${cmd}"
-	
-	switch (cmd.sensorType) {
-		case tempSensorType:
-				def unit = cmd.scale ? "F" : "C"
-				def temp = convertTemperatureIfNeeded(cmd.scaledSensorValue, unit, cmd.precision)
-				
-				sendEvent(getEventMap("temperature", temp, true, null, getTemperatureScale()))
-				break		
-				
-		case lightSensorType:			
-			sendEvent(getEventMap("illuminance", cmd.scaledSensorValue, true, null, "lux"))
-			break		
-
-		default:
-			logDebug "Unknown Sensor Type: ${cmd.sensorType}"
-	}
 	return []
 }
 
@@ -392,7 +319,7 @@ def zwaveEvent(physicalgraph.zwave.commands.notificationv3.NotificationReport cm
 def zwaveEvent(physicalgraph.zwave.commands.sensorbinaryv2.SensorBinaryReport cmd) {
 	logTrace "SensorBinaryReport: $cmd"
 	
-	sendEvent(getEventMap("motion", cmd.sensorValue ? "active" : "inactive", true))
+	sendEvent(getEventMap("contact", cmd.sensorValue ? "open" : "closed", true))
 	
 	return []
 }
@@ -427,52 +354,37 @@ private getEventMap(name, value, displayed=null, desc=null, unit=null) {
 
 
 private wakeUpNoMoreInfoCmd() {
-	return secureCmd(zwave.wakeUpV1.wakeUpNoMoreInformation())
+	return zwave.wakeUpV1.wakeUpNoMoreInformation().format()
 }
 
 private wakeUpIntervalSetCmd(value) {		
-	return secureCmd(zwave.wakeUpV2.wakeUpIntervalSet(seconds:value, nodeid:zwaveHubNodeId))
+	return zwave.wakeUpV2.wakeUpIntervalSet(seconds:value, nodeid:zwaveHubNodeId).format()
 }
 
 private wakeUpIntervalGetCmd() {
-	return secureCmd(zwave.wakeUpV1.wakeUpIntervalGet())
+	return zwave.wakeUpV1.wakeUpIntervalGet().format()
 }
 
 private batteryGetCmd() {	
-	return secureCmd(zwave.batteryV1.batteryGet())
+	return zwave.batteryV1.batteryGet().format()
 }
 
 private sensorBinaryGetCmd() {
-	return secureCmd(zwave.sensorBinaryV2.sensorBinaryGet())
-}
-
-private sensorMultilevelGetCmd(sensorType) {
-	def scale = (sensorType == tempSensorType ? 0 : 1)
-	return secureCmd(zwave.sensorMultilevelV5.sensorMultilevelGet(scale: scale, sensorType: sensorType))
+	return zwave.sensorBinaryV2.sensorBinaryGet().format()
 }
 
 private configGetCmd(param) {
-	return secureCmd(zwave.configurationV1.configurationGet(parameterNumber: param.num))
+	return zwave.configurationV1.configurationGet(parameterNumber: param.num).format()
 }
 
 private configSetCmd(param) {
-	return secureCmd(zwave.configurationV1.configurationSet(parameterNumber: param.num, size: param.size, configurationValue: intToHexBytes(param.value, param.size)))	
-}
-
-private secureCmd(cmd) {
-	if (zwaveInfo?.zw?.contains("s") || ("0x98" in device.rawDescription?.split(" "))) {
-		return zwave.securityV1.securityMessageEncapsulation().encapsulate(cmd).format()
-	}
-	else {
-		return cmd.format()
-	}	
+	return zwave.configurationV1.configurationSet(parameterNumber: param.num, size: param.size, configurationValue: intToHexBytes(param.value, param.size)).format()
 }
 
 
 private getCommandClassVersions() {
 	[
 		0x30: 2,	// SensorBinary
-		0x31: 5,	// SensorMultilevel (7)
 		0x59: 1,  // AssociationGrpInfo
 		0x5A: 1,  // DeviceResetLocally
 		0x5E: 2,  // ZwaveplusInfo
@@ -481,7 +393,7 @@ private getCommandClassVersions() {
 		0x72: 2,  // ManufacturerSpecific
 		0x73: 1,  // Powerlevel
 		0x80: 1,  // Battery
-		0x84: 1,  // WakeUp
+		0x84: 1,  // WakeUp (2)
 		0x85: 2,  // Association
 		0x86: 1,	// Version
 	]
@@ -505,80 +417,20 @@ private setParamStoredValue(paramNum, value) {
 }
 
 
-// Sensor Types
-private getTempSensorType() { return 1 }
-private getLightSensorType() { return 3 }
-
-
 // Configuration Parameters
 private getConfigParams() {
 	[
-		motionSensitivityParam,
-		motionClearIntervalParam,
-		basicSetLevelParam,
-		motionEnabledParam,
-		basicSetMotionLuxThresholdParam,
-		motionRetriggerIntervalParam,
-		luxReportingIntervalParam,
-		basicSetMotionLuxEnabledParam,
-		luxReportingThresholdParam,
-		temperatureReportingThresholdParam,
-		ledEnabledParam,
-		suppressDuplicateMotionEventsParam,
-		ambientLightIntensityCalibrationParam
+		basicSetOffDelayParam,
+		basicSetLevelParam
 	]
 }
 
-private getMotionSensitivityParam() {
-	return getParam(1, "Motion Sensitivity", 1, 20, motionSensitivityOptions)
-}
-
-private getMotionClearIntervalParam() {
-	return getParam(2, "Motion Clear Interval", 2, 30, motionClearIntervalOptions)
+private getBasicSetOffDelayParam() {
+	return getParam(1, "Basic Set Off Delay", 2, 0, basicSetOffDelayOptions)
 }
 
 private getBasicSetLevelParam() {
-	return getParam(3, "Basic Set Level", 1, 255, basicSetLevelOptions) 
-}
-
-private getMotionEnabledParam() {
-	return getParam(4, "Motion Detection", 1, 255,["0":"Disabled", "255":"Enabled"])
-}
-
-private getBasicSetMotionLuxThresholdParam() {
-	return getParam(5, "Basic Set Motion Light Threshold", 2, 100, luxLevelOptions)
-}
-
-private getMotionRetriggerIntervalParam() {
-	return getParam(6, "Motion Retrigger Interval", 1, 8, motionRetriggerIntervalOptions)
-}
-
-private getLuxReportingIntervalParam() {
-	return getParam(7, "Light Reporting Interval", 2, 180, luxReportingIntervalOptions)
-}
-
-private getBasicSetMotionLuxEnabledParam() {
-	return getParam(8, "Basic Set Motion Light Level Enabled", 1, 0, enabledDisabledOptions)
-}
-
-private getLuxReportingThresholdParam() {
-	return getParam(9, "Light Reporting Threshold", 1, 100, luxThresholdOptions)
-}
-
-private getTemperatureReportingThresholdParam() {
-	return getParam(10, "Temperature Reporting Threshold", 1, 5, temperatureReportingThresholdOptions)
-}
-
-private getLedEnabledParam() {
-	return getParam(11, "LED Enabled", 1, 1, enabledDisabledOptions)
-}
-
-private getSuppressDuplicateMotionEventsParam() {
-	return getParam(12, "Suppress Duplicate Motion Events", 1, 1, enabledDisabledOptions)
-}
-
-private getAmbientLightIntensityCalibrationParam() {
-	return getParam(99, "Ambient Light Intensity Calibration", 2, 1000, ambientLightIntensityCalibrationOptions)
+	return getParam(2, "Basic Set Level Param", 1, 255, basicSetLevelOptions)
 }
 
 private getParam(num, name, size, defaultVal, options=null, range=null) {
@@ -631,52 +483,9 @@ private getWakeUpIntervalOptions() {
 	return options
 }
 
-private getEnabledDisabledOptions() {
-	 return [
-		"0":"Disabled", 
-		"1":"Enabled"
-	]
-}
 
-private getMotionSensitivityOptions() {
-	def options = ["8":"Most Sensitive"]
-	
-	(2..24).each {
-		options["${it * 10}"] = "${it}"		
-	}
-
-	options["255"] = "Least Sensitive"
-	return options
-}
-
-private getLuxThresholdOptions() {
-	def options = ["0":"Disabled"]
-	
-	(1..5).each {
-		options["${it}"] = "${it}"
-	}
-	
-	[10,15,20,25,50,75,100].each {
-		options["${it}"] = "${it}"
-	}
-	return options
-}
-
-private getLuxLevelOptions() {
-	def options = ["0":"Disabled"]
-	
-	(1..5).each {
-		options["${it}"] = "${it}"
-	}
-	
-	[10,15,20,25,50,75,100,150,200,250,300,350,400,450,500,550,600,650,700,750,800,850,900,950,1000].each {
-		options["${it}"] = "${it}"
-	}
-	return options
-}
-
-private getMotionClearIntervalOptions() {
-	def options = [:]
+private getBasicSetOffDelayOptions() {
+	def options = ["0":"Send Off Immediately"]
 	
 	[9,10,15,20,30,45].each {
 		options["${it}"] = "${it} Seconds"
@@ -691,6 +500,15 @@ private getMotionClearIntervalOptions() {
 		options["${it * 60}"] = "${it} Minutes"
 	}
 	
+	[15,20,25,30,45].each {
+		options["${it * 60}"] = "${it} Minutes"
+	}
+	
+	options["${60 * 60}"] = "1 Hour"
+	[2,3,4,5,6,9,12,15,18].each {
+		options["${it * 60 * 60}"] = "${it} Hours"
+	}
+	
 	return options
 }
 
@@ -703,52 +521,6 @@ private getBasicSetLevelOptions() {
 	
 	options["99"] = "99%"
 	options["255"] = "On"
-	
-	return options
-}
-
-private getMotionRetriggerIntervalOptions() {
-	def options = ["1":"1 Second"]
-	
-	[2,3,4,5,6,7,8].each {
-		options["${it}"] = "${it} Seconds"
-	}
-	
-	return options
-}
-
-private getLuxReportingIntervalOptions() { 
-	def options = ["60":"1 Minute"]
-	
-	options["90"] = "1 Minute 30 Seconds"
-	[2,3,4,5,10,15].each {
-		options["${it * 60}"] = "${it} Minutes"
-	}
-	
-	options["3600"] = "1 Hour"
-	[2,3,4,5,6,7,8,9,10].each {
-		options["${it * 60 * 60}"] = "${it} Hours"
-	}
-	
-	return options
-}
-
-private getAmbientLightIntensityCalibrationOptions() {
-	def options = [:]
-	
-	[1,25,50,100,150,200,250,500,750,1000,1500,2000,2500,5000,7500,10000,15000,20000,25000,30000,35000,40000,45000,50000,55000,60000,65000].each {
-		options["${it}"] = "${it}"
-	}
-		
-	return options
-}
-
-private getTemperatureReportingThresholdOptions() {
-	def options = [:]
-	
-	(1..127).each {
-		options["${it}"] = "${it * 0.1}°C / ${(((it * 0.1) * 9) / 5)}°F"
-	}
 	
 	return options
 }

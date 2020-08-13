@@ -1,5 +1,5 @@
 /**
- *  Zooz S2 Multisiren v1.1
+ *  Zooz S2 Multisiren v1.4
  *  (Models: ZSE19)
  *
  *  Author: 
@@ -9,6 +9,22 @@
  *
  *
  *  Changelog:
+ *
+ *    1.4 (05/24/2020)
+ *      - Added lifeline association check and add the association if it wasn't automatically added during inclusion.
+ *
+ *    1.3.2 (05/18/2020)
+ *      - Fixed bug with health check interval.
+ *
+ *    1.3.1 (03/13/2020)
+ *      - Fixed bug with enum settings that was caused by a change ST made in the new mobile app.
+ *
+ *    1.3 (08/07/2019)
+ *      - Enhanced UI for new mobile app.
+ *			- Added Tone capability and "Beep Sound" setting.
+ *
+ *    1.2 (05/06/2018)
+ *      - Added volume setting.
  *
  *    1.1 (12/09/2018)
  *      - Added tamper capability.
@@ -33,7 +49,8 @@ metadata {
 		name: "Zooz S2 Multisiren", 
 		namespace: "krlaframboise", 
 		author: "Kevin LaFramboise",
-		vid:"generic-siren"
+		ocfDeviceType: "x.com.st.d.siren", 
+		vid: "generic-siren-11"
 	) {
 		capability "Actuator"
 		capability "Sensor"
@@ -41,6 +58,7 @@ metadata {
 		capability "Switch"		
 		capability "Audio Notification"
 		capability "Music Player"
+		capability "Tone"
 		capability "Speech Synthesis"
 		capability "Switch Level"
 		capability "Temperature Measurement"
@@ -140,6 +158,18 @@ metadata {
 			defaultValue: "0",
 			required: false,
 			options: setDefaultOption(switchOnActionOptions, "0")
+			
+		input "beepSound", "enum",
+			title: "Beep Sound",
+			defaultValue: "1",
+			required: false,
+			options: setDefaultOption(chimeSoundOptions, "1")
+			
+		input "chimeVolume", "enum",
+			title: "Chime Volume",
+			defaultValue: chimeVolumeSetting,
+			required: false,
+			options: setDefaultOption(chimeVolumeOptions, "32")
 
 		// input "tempOffset", "enum",
 			// title: "Temperature Offset",
@@ -160,6 +190,9 @@ metadata {
 	}
 }
 
+private getChimeVolumeSetting() {
+	return settings?.chimeVolume ?: "32"
+}
 
 def installed () { 
 	return response(refresh())
@@ -169,6 +202,8 @@ def installed () {
 def updated() {	
 	if (!isDuplicateCommand(state.lastUpdated, 3000)) {
 		state.lastUpdated = new Date().time
+		
+		logDebug "updated()..."
 
 		runIn(2, updateSyncStatus)
 		
@@ -182,6 +217,8 @@ def updated() {
 
 
 def configure() {	
+	logDebug "configure()..."
+
 	runIn(5, updateSyncStatus)
 			
 	def cmds = []
@@ -196,6 +233,18 @@ def configure() {
 	if (!device.currentValue("firmwareVersion")) {
 		cmds << versionGetCmd()
 	}
+		
+	if (!state.linelineAssoc) {
+		if (state.linelineAssoc != null) {
+			logDebug "Adding missing lineline association..."
+			cmds << lifelineAssociationSetCmd()
+		}
+		cmds << lifelineAssociationGetCmd()
+	}
+	
+	logDebug "CHANGING Volume to ${Integer.parseInt(chimeVolumeSetting, 16)}%"
+	cmds << soundSwitchConfigSetVolumeCmd(chimeVolumeSetting)
+	state.chimeVolume = chimeVolumeSetting
 	
 	configParams.each { 
 		logDebug "CHANGING ${it.name}(#${it.num}) from ${getParamStoredValue(it.num)} to ${it.value}"
@@ -222,6 +271,12 @@ def on() {
 			log.warn "Ignoring 'on' command because the Switch On Action setting is set to 'Do Nothing'"
 		}
 	}
+}
+
+
+def beep() {
+	logDebug "beep()..."
+	return playSound(safeToInt(settings?.beepSound, 0))
 }
 
 
@@ -400,6 +455,14 @@ private versionGetCmd() {
 	return secureCmd(zwave.versionV1.versionGet())
 }
 
+private lifelineAssociationSetCmd() {
+	return secureCmd(zwave.associationV2.associationSet(groupingIdentifier: 1, nodeId: [zwaveHubNodeId]))
+}
+
+private lifelineAssociationGetCmd() {
+	return secureCmd(zwave.associationV2.associationGet(groupingIdentifier: 1))
+}
+
 private basicGetCmd() {
 	return secureCmd(zwave.basicV1.basicGet())
 }
@@ -420,6 +483,16 @@ private switchBinarySetCmd(val) {
 	return secureCmd(zwave.switchBinaryV1.switchBinarySet(switchValue: val))
 }
 
+private soundSwitchConfigSetVolumeCmd(volume) {
+	def cmd = "7905${volume}01"
+	if (isSecurityEnabled()) {
+		return "988100${cmd}"
+	}
+	else {
+		return cmd
+	}
+}
+
 private configSetCmd(param, value) {
 	return secureCmd(zwave.configurationV1.configurationSet(parameterNumber: param.num, size: param.size, scaledConfigurationValue: value))
 }
@@ -429,12 +502,16 @@ private configGetCmd(param) {
 }
 
 private secureCmd(cmd) {
-	if (zwaveInfo?.zw?.contains("s") || ("0x98" in device.rawDescription?.split(" "))) {
+	if (isSecurityEnabled()) {
 		return zwave.securityV1.securityMessageEncapsulation().encapsulate(cmd).format()
 	}
 	else {
 		return cmd.format()
 	}	
+}
+
+private isSecurityEnabled() {
+	return zwaveInfo?.zw?.contains("s") || ("0x98" in device.rawDescription?.split(" "))
 }
 
 
@@ -541,6 +618,19 @@ def zwaveEvent(physicalgraph.zwave.commands.versionv1.VersionReport cmd) {
 }
 
 
+def zwaveEvent(physicalgraph.zwave.commands.associationv2.AssociationReport cmd) {
+	logTrace "AssociationReport: ${cmd}"
+	
+	updateSyncStatus("Syncing...")
+	runIn(5, updateSyncStatus)
+	
+	if (cmd.groupingIdentifier == 1) {
+		state.linelineAssoc = (cmd.nodeId == [zwaveHubNodeId]) ? true : false
+	}
+	return []
+}
+
+
 def zwaveEvent(physicalgraph.zwave.commands.batteryv1.BatteryReport cmd) {
 	logTrace "BatteryReport: $cmd"
 	
@@ -583,7 +673,7 @@ def zwaveEvent(physicalgraph.zwave.commands.configurationv2.ConfigurationReport 
 }
 
 private updateHealthCheckInterval(minutes) {
-	def minReportingInterval = calculateMinimumReportingInterval()
+	def minReportingInterval = (((reportingIntervalParam.value < 60) ? 60 : reportingIntervalParam.value) * 60)
 	
 	if (state.minReportingInterval != minReportingInterval) {
 		state.minReportingInterval = minReportingInterval
@@ -596,15 +686,6 @@ private updateHealthCheckInterval(minutes) {
 		
 		sendEvent(eventMap)
 	}	
-}
-
-private calculateMinimumReportingInterval() {
-	if (reportingIntervalParam.value < (30 * 60)) {
-		return (30 * 60)
-	}
-	else {
-		return reportingIntervalParam.value
-	}
 }
 
 def updateSyncStatus(status=null) {	
@@ -627,7 +708,7 @@ private getSyncStatus() {
 }
 
 private getPendingChanges() {
-	return (configParams.count { isConfigParamSynced(it) ? 0 : 1 })
+	return (configParams.count { isConfigParamSynced(it) ? 0 : 1 } + (settings?.chimeVolume != state.chimeVolume ? 1 : 0) + (!state.linelineAssoc ? 1 : 0))
 }
 
 private isConfigParamSynced(param) {
@@ -746,7 +827,7 @@ private getParam(num, name, size, defaultVal, options=null) {
 }
 
 private setDefaultOption(options, defaultVal) {
-	return options?.collect { k, v ->
+	return options?.collectEntries { k, v ->
 		if ("${k}" == "${defaultVal}") {
 			v = "${v} [DEFAULT]"		
 		}
@@ -794,10 +875,30 @@ private getSwitchOnActionOptions() {
 		"on": "Turn On Siren"	
 	]
 	
-	(1..99).each {
+	(1..37).each {
 		options["${it}"] = "Play Sound #${it}"
 	}	
 	return options
+}
+
+private getChimeSoundOptions() {
+	def options = [:]	
+	(1..37).each {
+		options["${it}"] = "Sound #${it}"
+	}	
+	return options
+}
+
+private getChimeVolumeOptions() {
+	def options = [:]
+	[1,10,20,30,40,50,60,70,80,90,100].each {
+		options["${convertToHex(it)}"] = "${it}%"
+	}
+	return options
+}
+
+private convertToHex(num) {
+	return Integer.toHexString(num).padLeft(2, "0").toUpperCase()
 }
 
 private getTempOffsetOptions() {
@@ -882,5 +983,5 @@ private logDebug(msg) {
 }
 
 private logTrace(msg) {
-	log.trace "$msg"
+	// log.trace "$msg"
 }
